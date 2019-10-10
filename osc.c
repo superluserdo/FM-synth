@@ -49,65 +49,81 @@ int square(double f, double v) {
 }
 
 //double sinew(double f, double v, double theta, double offset) {
-double sinew(void *v) {
-	struct gs_oscillator_state *state = v;
+double sinew(struct gs_graph_node *node) {
+	struct gs_oscillator_state *state = node->state;
 	//int l = cycle_length(sample_rate, state->f);
 	return sin(state->theta)*state->v;
 }
 
-double gs_osc_sin(void *v) {
-	struct gs_oscillator_state *state = v;
+double gs_osc_sin(struct gs_graph_node *node) {
+	struct gs_oscillator_state *state = node->state;
 	//int l = cycle_length(sample_rate, state->f);
 	double val = sin(state->theta)*state->v;
 	state->theta = fmod(state->theta + 2*PI/cycle_length(sample_rate, state->f),2*PI);
 	return val;
 }
 
-double gs_fmul(void *v) {
-	struct gs_arithmetic_state *state = v;
-	double result = 1;
-	for (int i = 0; i < state->n_inputs_max; i++) {
-		if (state->inputs_used[i]) {
-			result *= state->inputs[i].d;
+double gs_fmul(struct gs_graph_node *node) {
+	struct gs_arithmetic_state *state = node->state;
+	double result = state->input_default;
+	for (int i = 0; i < node->n_inputs; i++) {
+		if (node->inputs[i]) {
+			result *= state->inputs[i];
 		}
 	}
 	return result;
 }
 
-double gs_fadd(void *v) {
-	struct gs_arithmetic_state *state = v;
-	double result = 0;
-	for (int i = 0; i < state->n_inputs_max; i++) {
-		if (state->inputs_used[i]) {
-			result += state->inputs[i].d;
+double gs_fadd(struct gs_graph_node *node) {
+	struct gs_arithmetic_state *state = node->state;
+	double result = state->input_default;
+	for (int i = 0; i < node->n_inputs; i++) {
+		if (node->inputs[i]) {
+			result += state->inputs[i];
 		}
 	}
 	return result;
 }
 
-union i_d *gs_arithmetic_get_avail_slot(struct gs_arithmetic_state *state) {
-	int found_slot = -1;
-	for (int i = 0; i < state->n_inputs_max; i++) {
-		if (!state->inputs_used[i]) {
-			found_slot = i;
-			state->inputs_used[i] = true;
-			break;
-		}
-	}
-	if (found_slot == -1) {
-		fprintf(stderr, "Couldn't get input slot for arithmetic node :(\n");
-		abort();
-	}
-	return &state->inputs[found_slot];
-}
+//double *gs_arithmetic_get_avail_slot(struct gs_arithmetic_state *state) {
+//	int found_slot = -1;
+//	for (int i = 0; i < node->n_inputs; i++) {
+//		if (!state->inputs[i]) {
+//			found_slot = i;
+//			state->inputs[i] = true;
+//			break;
+//		}
+//	}
+//	if (found_slot == -1) {
+//		fprintf(stderr, "Couldn't get input slot for arithmetic node :(\n");
+//		abort();
+//	}
+//	return &state->inputs[found_slot];
+//}
+
+//double *gs_arithmetic_get_new_slot(struct gs_arithmetic_state *state) {
+//	int found_slot = -1;
+//	for (int i = 0; i < node->n_inputs; i++) {
+//		if (!state->inputs[i]) {
+//			found_slot = i;
+//			state->inputs[i] = true;
+//			break;
+//		}
+//	}
+//	if (found_slot == -1) {
+//		fprintf(stderr, "Couldn't get input slot for arithmetic node :(\n");
+//		abort();
+//	}
+//	return &state->inputs[found_slot];
+//}
 
 
 int f_to_i(double num) {
 	return INT_MAX*num;
 }
 
-double gs_f_to_i_state(void *v) {
-	struct gs_audio_out_state *state = v;
+double gs_f_to_i_state(struct gs_graph_node *node) {
+	struct gs_audio_out_state *state = node->state;
 	state->i = INT_MAX * state->d;
 	return 0;
 }
@@ -251,3 +267,41 @@ struct oscillator_old *osc_deepcopy(struct oscillator_old *osc_orig) {
 	return osc_new_carrier;
 }
 
+struct gs_graph_node *gs_osc_seq_freqmod(struct gs_graph *graph, struct gs_graph_node *sequencer, struct gs_graph_node *target, double modf_multiple, double modv, int mul) {
+
+	double (*func)(struct gs_graph_node *) = mul ? gs_fmul : gs_fadd;
+
+	struct gs_graph_node *node_f_add = gs_new_node(graph, 
+			(struct gs_graph_node) {
+				.name = "f_add", 
+				.n_outputs = 1, 
+				.outputs = (struct output_node_value []){{.node=target, 
+						.value=&((struct gs_oscillator_state *)target->state)->f}}, 
+				.state = &(struct gs_arithmetic_state) {.input_default = ((struct gs_oscillator_state *)target->state)->f},
+				.func = func
+			}, sizeof(struct gs_arithmetic_state));
+
+
+	struct gs_graph_node *node_fmod = gs_new_node(graph, 
+			(struct gs_graph_node) {
+				.name = "f_mod", 
+				.state = &(struct gs_oscillator_state) {.v = modv}, 
+				.func = gs_osc_sin
+			}, sizeof(struct gs_arithmetic_state));
+	gs_connect_to_arithmetic_node(graph, node_fmod, node_f_add);
+
+	struct gs_graph_node *node_fmod_mul = gs_new_node(graph, 
+			(struct gs_graph_node) {
+				.name = "f_mod_mul", 
+				.n_outputs = 1, 
+				.outputs = (struct output_node_value []){
+						{.node=node_fmod, .value=&((struct gs_oscillator_state *)node_fmod->state)->f},
+		}, 
+				.state = &(struct gs_arithmetic_state) {.input_default = modf_multiple},
+				.func = gs_fmul
+			}, sizeof(struct gs_arithmetic_state));
+
+	gs_connect_to_arithmetic_node(graph, sequencer, node_fmod_mul);
+
+	return node_fmod_mul;
+}

@@ -20,12 +20,6 @@ struct gs_audio_out_state {
 	double d;
 };
 
-struct gs_arithmetic_state {
-	int n_inputs_max;
-	bool *inputs_used;
-	union i_d *inputs;
-};
-
 struct oscillator_old {
 	double f_mult;
 	double f;
@@ -70,17 +64,19 @@ enum keys {A, Bb, B, C, Cs, D, Eb, E, F, Fs, G, Ab};
 struct oscillator_old *osc_deepcopy(struct oscillator_old *osc_orig);
 int osc_play_seq(struct voice *voice);
 
-struct gs_graph_node gs_new_oscillator(int n_outputs, struct output_node_value outputs[n_outputs], struct gs_oscillator_state *state, double (*func)(void *));
-union i_d *gs_arithmetic_get_avail_slot(struct gs_arithmetic_state *state);
+struct gs_graph_node gs_new_oscillator(int n_outputs, struct output_node_value outputs[n_outputs], struct gs_oscillator_state *state, double (*func)(struct gs_graph_node *));
+//union i_d *gs_arithmetic_get_avail_slot(struct gs_arithmetic_state *state);
+double *gs_arithmetic_get_avail_slot(struct gs_arithmetic_state *state);
+struct gs_graph_node *gs_osc_seq_freqmod(struct gs_graph *graph, struct gs_graph_node *sequencer, struct gs_graph_node *target, double modf_multiple, double modv, int mul);
 
 /* Oscillator primitives: */
 
 int square(double f, double v);
-double sinew(void *v);
-double gs_osc_sin(void *v);
-double gs_fmul(void *v);
-double gs_fadd(void *v);
-double gs_f_to_i_state(void *v);
+double sinew(struct gs_graph_node *);
+double gs_osc_sin(struct gs_graph_node *);
+double gs_fmul(struct gs_graph_node *);
+double gs_fadd(struct gs_graph_node *);
+double gs_f_to_i_state(struct gs_graph_node *);
 
 /* Output */
 
