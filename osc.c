@@ -49,40 +49,48 @@ int square(double f, double v) {
 }
 
 //double sinew(double f, double v, double theta, double offset) {
-double sinew(struct gs_graph_node *node) {
-	struct gs_oscillator_state *state = node->state;
-	//int l = cycle_length(sample_rate, state->f);
-	return sin(state->theta)*state->v;
-}
+//void sinew(struct gs_graph_node *node) {
+//	struct gs_oscillator_state *state = node->state;
+//	//int l = cycle_length(sample_rate, state->f);
+//	double val = sin(state->theta)*state->v;
+//}
 
-double gs_osc_sin(struct gs_graph_node *node) {
+void gs_osc_sin(struct gs_graph_node *node) {
 	struct gs_oscillator_state *state = node->state;
 	//int l = cycle_length(sample_rate, state->f);
 	double val = sin(state->theta)*state->v;
 	state->theta = fmod(state->theta + 2*PI/cycle_length(sample_rate, state->f),2*PI);
-	return val;
+	for (int i = 0; i < node->n_outputs; i++) {
+		*(double *)node->outputs[i].value = val;
+	}
 }
 
-double gs_fmul(struct gs_graph_node *node) {
+void gs_fmul(struct gs_graph_node *node) {
 	struct gs_arithmetic_state *state = node->state;
-	double result = state->input_default;
+	double val = state->input_default;
 	for (int i = 0; i < node->n_inputs; i++) {
 		if (node->inputs[i]) {
-			result *= state->inputs[i];
+			val *= state->inputs[i];
 		}
 	}
-	return result;
+	//return result;
+	for (int i = 0; i < node->n_outputs; i++) {
+		*(double *)node->outputs[i].value = val;
+	}
 }
 
-double gs_fadd(struct gs_graph_node *node) {
+void gs_fadd(struct gs_graph_node *node) {
 	struct gs_arithmetic_state *state = node->state;
-	double result = state->input_default;
+	double val = state->input_default;
 	for (int i = 0; i < node->n_inputs; i++) {
 		if (node->inputs[i]) {
-			result += state->inputs[i];
+			val += state->inputs[i];
 		}
 	}
-	return result;
+	//return result;
+	for (int i = 0; i < node->n_outputs; i++) {
+		*(double *)node->outputs[i].value = val;
+	}
 }
 
 //double *gs_arithmetic_get_avail_slot(struct gs_arithmetic_state *state) {
@@ -122,10 +130,9 @@ int f_to_i(double num) {
 	return INT_MAX*num;
 }
 
-double gs_f_to_i_state(struct gs_graph_node *node) {
+void gs_f_to_i_state(struct gs_graph_node *node) {
 	struct gs_audio_out_state *state = node->state;
 	state->i = INT_MAX * state->d;
-	return 0;
 }
 
 void writeint(int num) {
@@ -267,20 +274,58 @@ struct oscillator_old *osc_deepcopy(struct oscillator_old *osc_orig) {
 	return osc_new_carrier;
 }
 
+struct gs_graph_node *gs_new_voice(struct gs_graph *graph, struct gs_graph_node *sequencer, struct gs_graph_node *adsr_controller, struct gs_graph_node node, size_t size) {
+	struct gs_graph_node *node_voice = gs_new_node(graph, node, size);
+	//struct gs_graph_node *carrier_f = gs_
+	struct gs_graph_node *voice_envelope = gs_new_node(graph, 
+			(struct gs_graph_node) {
+				.name = "envelope", 
+				.state = &(struct gs_arithmetic_state) {.input_default = 1},
+				.func = gs_fmul
+			}, sizeof(struct gs_arithmetic_state));
+	gs_connect_to_arithmetic_node(graph, voice_envelope, graph->mixer);
+	gs_connect_to_arithmetic_node(graph, node_voice, voice_envelope);
+
+	//gs_connect_nodes(graph, adsr_controller, node_voice, &((struct gs_oscillator_state *)node_voice->state)->f);
+	gs_connect_to_arithmetic_node(graph, adsr_controller, voice_envelope);
+	gs_connect_nodes(graph, sequencer, adsr_controller, &((struct gs_adsr_state *)adsr_controller->state)->f_samples);
+	gs_connect_nodes(graph, sequencer, node_voice, &((struct gs_oscillator_state *)node_voice->state)->f);
+	return node_voice;
+}
+
+//void gs_connect_seq_osc(struct gs_graph_node *sequencer, struct gs_graph_node *adsr_controller, struct gs_graph_node *osc) {
+//	gs_connect_nodes(graph, adsr_controller, osc, ((struct gs_oscillator_state *)osc->state)->f);
+//	gs_connect_nodes(graph, sequencer, adsr_controller, ((struct gs_adsr_state *)adsr_controller->state)->f_samples);
+//}
+//
+//void gs_connect_adsr_voice(struct gs_graph_node *adsr_controller, struct gs_graph_node *voice) {
+//	struct gs_graph_node *voice_envelope = gs_new_node(graph, 
+//			(struct gs_graph_node) {
+//				.name = "envelope", 
+//				.n_outputs = 1, 
+//				.outputs = (struct output_node_value []){voice}, 
+//				.state = &(struct gs_arithmetic_state) {.input_default = ((struct gs_oscillator_state *)target->state)->f},
+//				.func = gs_fmul
+//			}, sizeof(struct gs_arithmetic_state));
+//	gs_connect_nodes(graph, adsr_controller, osc, ((struct gs_oscillator_state *)osc->state)->f);
+//	gs_connect_nodes(graph, sequencer, adsr_controller, ((struct gs_adsr_state *)adsr_controller->state)->f_samples);
+//}
+
 struct gs_graph_node *gs_osc_seq_freqmod(struct gs_graph *graph, struct gs_graph_node *sequencer, struct gs_graph_node *target, double modf_multiple, double modv, int mul) {
 
-	double (*func)(struct gs_graph_node *) = mul ? gs_fmul : gs_fadd;
+	void (*func)(struct gs_graph_node *) = mul ? gs_fmul : gs_fadd;
 
 	struct gs_graph_node *node_f_add = gs_new_node(graph, 
 			(struct gs_graph_node) {
 				.name = "f_add", 
-				.n_outputs = 1, 
-				.outputs = (struct output_node_value []){{.node=target, 
-						.value=&((struct gs_oscillator_state *)target->state)->f}}, 
-				.state = &(struct gs_arithmetic_state) {.input_default = ((struct gs_oscillator_state *)target->state)->f},
+				//.n_outputs = 1, 
+				//.outputs = (struct output_node_value []){{.node=target, 
+				//		.value=&((struct gs_oscillator_state *)target->state)->f}}, 
+				.state = &(struct gs_arithmetic_state) {0},//.input_default = ((struct gs_oscillator_state *)target->state)->f},
 				.func = func
 			}, sizeof(struct gs_arithmetic_state));
 
+	graph_insert_arithmetic_input(graph, node_f_add, target, &((struct gs_oscillator_state *)target->state)->f);
 
 	struct gs_graph_node *node_fmod = gs_new_node(graph, 
 			(struct gs_graph_node) {
@@ -296,12 +341,107 @@ struct gs_graph_node *gs_osc_seq_freqmod(struct gs_graph *graph, struct gs_graph
 				.n_outputs = 1, 
 				.outputs = (struct output_node_value []){
 						{.node=node_fmod, .value=&((struct gs_oscillator_state *)node_fmod->state)->f},
-		}, 
+				}, 
 				.state = &(struct gs_arithmetic_state) {.input_default = modf_multiple},
 				.func = gs_fmul
 			}, sizeof(struct gs_arithmetic_state));
 
 	gs_connect_to_arithmetic_node(graph, sequencer, node_fmod_mul);
 
-	return node_fmod_mul;
+	return node_fmod;
 }
+
+void gs_seq_func(struct gs_graph_node *node) {
+	struct gs_sequencer_state *state = node->state;
+	struct f_samples *f_samples = &state->f_samples;
+	struct gs_sequence sequence = state->sequence;
+
+	struct seq_note curr_note = sequence.notes[state->curr_note];
+	double note_beat_diff = state->curr_note_beat_progress - curr_note.duration;
+
+	f_samples->f = key_to_f(curr_note.key);
+	for (int i = 0; i < node->n_outputs; i++) {
+		// Hack :(
+		if (node->outputs[i].node->func == gs_control_adsr) {
+			*(struct f_samples *)node->outputs[i].value = *f_samples;
+		} else {
+			*(double *)node->outputs[i].value = f_samples->f;
+		}
+	}
+	state->curr_sample++;
+	f_samples->samples++;
+
+	double beat_diff = 1/(double)(state->samples_per_beat);
+
+	state->curr_beat += beat_diff;
+	state->curr_note_beat_progress += beat_diff;
+
+	if (note_beat_diff >= 0) {
+		state->curr_note++;
+		state->curr_note_beat_progress = note_beat_diff;
+		f_samples->samples = 0;
+	}
+
+	if (state->curr_note >= sequence.seq_len) {
+		node->hangup = 1;
+	}
+
+}
+
+
+double gs_atk_func_linear(int samples, int atk_samples) {
+	return (double)samples/atk_samples;
+}
+
+double gs_dec_func_linear(int samples, int dec_samples, double sus_val) {
+	return 1 - (1 - sus_val) * (double)samples/dec_samples;
+}
+
+void gs_control_adsr(struct gs_graph_node *node) {
+	static int test_counter = 0;
+	double result = 1;
+	struct gs_adsr_state *state = node->state;
+	struct gs_adsr adsr = state->adsr;
+
+	int n_samples = state->f_samples.samples;
+	if (state->f_samples.f > 0) {
+		/* Note is held */
+		if (n_samples > (adsr.atk_samples + adsr.dec_samples)) {
+			result = adsr.sus_val;
+		} else if (n_samples > adsr.atk_samples) {
+			if (adsr.dec_func) {
+				result = adsr.dec_func(n_samples - adsr.atk_samples, adsr.dec_samples, adsr.sus_val);
+			} else {
+				result = 1;
+			}
+		} else {
+			if (adsr.atk_func) {
+				result = adsr.atk_func(n_samples, adsr.atk_samples);
+			} else {
+				result = 1;
+			}
+		}
+	} else {
+		/* Note is off */
+		if (n_samples > adsr.rel_samples) {
+			result = 0;
+		} else {
+			if (adsr.rel_func) {
+				result = adsr.rel_func(n_samples, adsr.rel_samples, adsr.sus_val);
+			} else {
+				result = 0;
+			}
+		}
+	}
+
+	
+	for (int i = 0; i < node->n_outputs; i++) {
+		*(double *)node->outputs[i].value = result;
+	}
+	//fprintf(stderr, "%f\n", result);
+	//if (test_counter > 10) {
+	//	exit(0);
+	//}
+	test_counter++;
+}
+
